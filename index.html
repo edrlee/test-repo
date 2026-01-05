@@ -270,39 +270,35 @@ hr {
     const BASE_URL = "https://forms.zohopublic.com/CNUCOM/form/CNUCollegeofMedicine1/formperma/3rDhVti_lRn30ObkXtgR3vkZoqfJ_CoOKONdJXPYDsA";
     const form = document.getElementById("builder");
     
-    let adminImportUsed = false; // becomes true when Admin paste/selection is used
-
-    // ===== Usage logging to Google Sheets (Apps Script Web App) =====
-    // 1) Paste your deployed Apps Script Web App URL and token below.
-    // 2) This logger records ONLY: timestamp, role (student/admin), event name, page URL, and user agent.
+    let adminImportUsed = false; 
+    // ===== Usage logging (Google Sheets) =====
     const LOG_ENDPOINT = "https://script.google.com/macros/s/AKfycbzJ1rdHkUWHTZGdX9mPaMdVGONYdgfZIrgGjcRDEOiY8cD3P5qsiabMEc0ER6hDL1Or6g/exec";
     const LOG_TOKEN = "fdsajk;34qFDAafsmc3iq3u89f!fa";
 
     function getRoleForLog() {
-      return adminImportUsed ? "admin" : "student";
+      return (typeof adminImportUsed !== "undefined" && adminImportUsed) ? "admin" : "student";
     }
 
     function logEvent(eventName) {
-      // If not configured, do nothing.
-      if (!LOG_ENDPOINT || LOG_ENDPOINT.includes("PASTE_") || !LOG_TOKEN || LOG_TOKEN.includes("PASTE_")) return;
+      try {
+        const params = new URLSearchParams();
+        params.append("token", LOG_TOKEN);
+        params.append("role", getRoleForLog());
+        params.append("event", eventName);
+        params.append("page", location.href);
+        params.append("ua", navigator.userAgent);
 
-      const payload = {
-        token: LOG_TOKEN,
-        role: getRoleForLog(),
-        event: String(eventName || "").slice(0, 100),
-        page: location.href,
-        ua: navigator.userAgent
-      };
-
-      // Fire-and-forget; never block UI.
-      fetch(LOG_ENDPOINT, {
-    method: "POST",
-    // Avoid CORS preflight (Apps Script web apps don\'t handle OPTIONS well)
-    mode: "no-cors",
-    body: JSON.stringify(payload)
-  }).catch(() => {});
+        // Fire-and-forget; URL-encoded form POST avoids CORS preflight and is reliable for Apps Script
+        fetch(LOG_ENDPOINT, {
+          method: "POST",
+          body: params
+        }).catch(() => {});
+      } catch (_) {
+        // Never allow logging failures to break the UI
+      }
     }
-
+    // ===== End usage logging =====
+// becomes true when Admin paste/selection is used
 
     // When STUDENT data is used (i.e., not Admin import), add the appropriate coordinator/recipient
     // based on the student's last-name initial (A–E, F–M, N–Z).
@@ -655,8 +651,8 @@ const student = (seEl.value || "").trim();
     form.querySelector('[name="p2"]')?.addEventListener("change", toggleWarnP2);
 
     document.getElementById("copyEmailBtn").onclick = async () => {
-      
-      logEvent("create_link");if (!validateRequiredFields("🔗 Create Link")) return;
+      logEvent("create_link");
+      if (!validateRequiredFields("🔗 Create Link")) return;
 
       if (!requireRotationType("🔗 Create Link")) return;
 const roEl = form.querySelector('[name="ro"]');
@@ -670,16 +666,16 @@ const roEl = form.querySelector('[name="ro"]');
       showToast("Link created and copied to clipboard.");
     };
 document.getElementById("copyFullEmailBtn").onclick = async () => {
-      
-      logEvent("copy_full_email");if (!validateRequiredFields("📋 Email (Clipboard)")) return;
+      logEvent("copy_full_email");
+      if (!validateRequiredFields("📋 Email (Clipboard)")) return;
 
       if (!requireRotationType("📋 Email (Clipboard)")) return;
       await copyFullEmailRich();
     };
 
     document.getElementById("composeBtn").onclick = async () => {
-      
-      logEvent("email_client");if (!validateRequiredFields("📧 Email (Client)")) return;
+      logEvent("email_client");
+      if (!validateRequiredFields("📧 Email (Client)")) return;
 
       if (!requireRotationType("📧 Email (Client)")) return;
       await composeEmailMailto();
@@ -687,8 +683,8 @@ document.getElementById("copyFullEmailBtn").onclick = async () => {
     };
 
     document.getElementById("composeWebBtn").onclick = async () => {
-      
-      logEvent("email_web");if (!validateRequiredFields("🌐 Email (Web)")) return;
+      logEvent("email_web");
+      if (!validateRequiredFields("🌐 Email (Web)")) return;
 
       if (!requireRotationType("🌐 Email (Web)")) return;
       await composeEmailOutlookWeb();
@@ -789,8 +785,8 @@ document.getElementById("copyFullEmailBtn").onclick = async () => {
 
       // Success: fill form, mark as paste-used, set warnings, clear highlights, close modal
       fillFromParsed(parsed);
-      pasteAutofillUsed = true;
-      logEvent("student_paste_success");
+      
+      logEvent("student_paste_success");pasteAutofillUsed = true;
 
       
       // Remember last successful student paste
@@ -1266,10 +1262,10 @@ pasteAdminModal.style.display = "block";
       function fillRotation(r) {
         
         adminImportUsed = true;
-        logEvent("admin_import_used");
 if (typeof fillFromParsed === "function") {
           fillFromParsed(r);
-        }
+        
+      logEvent("admin_import_used");}
         if (typeof pasteAutofillUsed !== "undefined") pasteAutofillUsed = true;
 
         
