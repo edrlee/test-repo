@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -274,7 +275,7 @@ hr {
     // ===== Usage logging to Google Sheets (Apps Script Web App) =====
     // 1) Paste your deployed Apps Script Web App URL and token below.
     // 2) This logger records ONLY: timestamp, role (student/admin), event name, page URL, and user agent.
-    const LOG_ENDPOINT = "https://script.googleusercontent.com/macros/echo?user_content_key=AehSKLiN9AdG0sHJ-687_kVkbL03CAJBQUB8OkDvW0rUPp_OVyZAJp1VSfnAd8zmAZ2KLgdX1AbeuEpJyHrJMEpq42R-MnnAFZ4HLJxJDVwuiwjCZe3CrZHbQ0yuxLCsJkTfCNtE0NNaucRIb5G5U721a3z09o9VVSIC-T5AwQpUfggT8e2UAc2s_Cwfel9O6RT_bdJvpNHYZPC6OJ8kUSn410XHn-wwo5V8BJOuK2PxX7RQv0Hg1L7xeMsfUEkbNi-iSX_eOizS8_iVCjl8ZKBROf63LGxtKHBAvF7WE0ma&lib=M1CvKJGSMUb2jaTDFBwWpAkA8aVZMtNLT";
+    const LOG_ENDPOINT = "https://script.google.com/macros/s/AKfycbzJ1rdHkUWHTZGdX9mPaMdVGONYdgfZIrgGjcRDEOiY8cD3P5qsiabMEc0ER6hDL1Or6g/exec";
     const LOG_TOKEN = "fdsajk;34qFDAafsmc3iq3u89f!fa";
 
     function getRoleForLog() {
@@ -295,11 +296,11 @@ hr {
 
       // Fire-and-forget; never block UI.
       fetch(LOG_ENDPOINT, {
-        method: "POST",
-        mode: "cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      }).catch(() => {});
+    method: "POST",
+    // Avoid CORS preflight (Apps Script web apps don\'t handle OPTIONS well)
+    mode: "no-cors",
+    body: JSON.stringify(payload)
+  }).catch(() => {});
     }
 
 
