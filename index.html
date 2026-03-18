@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -182,7 +181,7 @@ hr {
     </div>
 </div>
 <div class="row">
-      <button class="secondary" type="reset">🧹 Clear Form</button>
+      <button id="clearBtn" class="secondary" type="button">🧹 Clear Form</button>
     </div>
 
   <div id="rotTypeBanner" class="warning" style="display:none; background:#fee2e2; border-color:#fecaca; color:#991b1b; font-weight:700;">
@@ -270,34 +269,235 @@ hr {
     const BASE_URL = "https://forms.zohopublic.com/CNUCOM/form/CNUCollegeofMedicine1/formperma/3rDhVti_lRn30ObkXtgR3vkZoqfJ_CoOKONdJXPYDsA";
     const form = document.getElementById("builder");
     
-    let adminImportUsed = false; 
-    // ===== Usage logging (Google Sheets) =====
-    const LOG_ENDPOINT = "https://script.google.com/macros/s/AKfycbzJ1rdHkUWHTZGdX9mPaMdVGONYdgfZIrgGjcRDEOiY8cD3P5qsiabMEc0ER6hDL1Or6g/exec";
-    const LOG_TOKEN = "fdsajk;34qFDAafsmc3iq3u89f!fa";
+    let adminImportUsed = false;
+// ===== Analytics logging (no student identifiers) =====
+const LOG_ENDPOINT = "https://script.google.com/macros/s/AKfycbzJ1rdHkUWHTZGdX9mPaMdVGONYdgfZIrgGjcRDEOiY8cD3P5qsiabMEc0ER6hDL1Or6g/exec";
+const LOG_TOKEN = "fdsajk;34qFDAafsmc3iq3u89f!fa";
+const APP_VERSION = "1.2";
+const SCRIPT_VERSION = "as-1.2";
+let CURRENT_CLASS_OF = ""; // set after successful paste/extract; used for subsequent main actions
 
-    function getRoleForLog() {
-      return (typeof adminImportUsed !== "undefined" && adminImportUsed) ? "admin" : "student";
+function setCurrentClassOfFromText(text) {
+  const yr = inferClassOfFromText(text);
+  if (yr) CURRENT_CLASS_OF = yr;
+  return CURRENT_CLASS_OF;
+}
+
+
+// ===== Manual entry tracking =====
+// Tracks which fields were manually edited after the last successful extract/paste.
+// Logged in column "manual" as a comma-separated list of field identifiers.
+let IS_AUTOFILLING = false;
+const MANUAL_FIELDS = new Set();
+
+function fieldKey(el) {
+  if (!el) return "";
+  const name = (el.getAttribute("name") || "").trim();
+  const id = (el.getAttribute("id") || "").trim();
+  // Prefer stable "name" first; fall back to id.
+  return name || id || "";
+}
+
+function resetManualFields() {
+  MANUAL_FIELDS.clear();
+}
+
+function getManualFieldsCSV() {
+  return Array.from(MANUAL_FIELDS).filter(Boolean).join(",");
+}
+
+function markManual(el) {
+  const key = fieldKey(el);
+  if (key) MANUAL_FIELDS.add(key);
+}
+
+// Attach listeners to form fields (excluding modal paste textareas)
+document.addEventListener("DOMContentLoaded", () => {
+  try {
+    const form = document.getElementById("builder") || document.querySelector("form");
+    if (!form) return;
+
+    const isInModal = (el) => {
+      const modal = el.closest("#pasteModal, #pasteAdminModal");
+      return !!modal;
+    };
+
+    const fields = form.querySelectorAll("input, select, textarea");
+    fields.forEach((el) => {
+      if (isInModal(el)) return;
+      el.addEventListener("input", (e) => {
+        if (IS_AUTOFILLING) return;
+        markManual(e.target);
+      });
+      el.addEventListener("change", (e) => {
+        if (IS_AUTOFILLING) return;
+        markManual(e.target);
+      });
+    });
+  } catch (_) {}
+});
+// ===== class_of inference (only attached to paste/extract events) =====
+function inferClassOfFromText(text) {
+  try {
+    const t = String(text || "");
+    // Matches: "M4 Co2027 Tracker"
+    let m = t.match(/\bCo(20\d{2})\b/i);
+    if (m && m[1]) return m[1];
+    // Matches: "Class of 2027"
+    m = t.match(/\bClass\s+of\s+(20\d{2})\b/i);
+    if (m && m[1]) return m[1];
+    return "";
+  } catch (_) { return ""; }
+}
+
+function getPasteClassOf(mode) {
+  try {
+    if (mode === "admin") {
+      const ta = document.getElementById("pasteAdminText");
+      return inferClassOfFromText(ta ? ta.value : "");
+    } else {
+      const ta = document.getElementById("pasteText");
+      return inferClassOfFromText(ta ? ta.value : "");
     }
+  } catch (_) { return ""; }
+}
 
-    function logEvent(eventName) {
-      try {
-        const params = new URLSearchParams();
-        params.append("token", LOG_TOKEN);
-        params.append("role", getRoleForLog());
-        params.append("event", eventName);
-        params.append("page", location.href);
-        params.append("ua", navigator.userAgent);
 
-        // Fire-and-forget; URL-encoded form POST avoids CORS preflight and is reliable for Apps Script
-        fetch(LOG_ENDPOINT, {
-          method: "POST",
-          body: params
-        }).catch(() => {});
-      } catch (_) {
-        // Never allow logging failures to break the UI
-      }
+// persistent per-browser id
+function getClientId() {
+  try {
+    let cid = localStorage.getItem("m4_eval_client_id");
+    if (!cid) {
+      cid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+      localStorage.setItem("m4_eval_client_id", cid);
     }
-    // ===== End usage logging =====
+    return cid;
+  } catch (_) {
+    return "";
+  }
+}
+
+// per page-load id
+const SESSION_ID = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+
+// role helper
+function getRoleForLog() {
+  try {
+    return (typeof adminImportUsed !== "undefined" && adminImportUsed) ? "admin" : "student";
+  } catch (_) {
+    return "student";
+  }
+}
+
+
+function getStudentInitials() {
+  try {
+    const sfn = (document.querySelector('[name="sfn"]')?.value || "").trim();
+    const sln = (document.querySelector('[name="sln"]')?.value || "").trim();
+    const fi = sfn ? sfn[0].toUpperCase() : "";
+    const li = sln ? sln[0].toUpperCase() : "";
+    return fi + li;
+  } catch (_) {
+    return "";
+  }
+}
+
+function getPreceptorEmailForLog() {
+  try {
+    return (document.querySelector('[name="pe"]')?.value || "").trim();
+  } catch (_) {
+    return "";
+  }
+}
+
+function logEvent(eventName, roleOverride, classOfOverride) {
+  try {
+    const params = new URLSearchParams();
+    params.append("token", LOG_TOKEN);
+
+    const role = roleOverride || ((typeof getRoleForLog === "function") ? getRoleForLog() : ((typeof adminImportUsed !== "undefined" && adminImportUsed) ? "admin" : "student"));
+    params.append("role", role);
+
+    params.append("event", eventName);
+    params.append("client_id", getClientId());
+    params.append("session_id", SESSION_ID);
+    params.append("app_version", APP_VERSION);
+    params.append("script_version", SCRIPT_VERSION);
+    params.append("class_of", classOfOverride || CURRENT_CLASS_OF || "");
+    params.append("manual", getManualFieldsCSV());
+    params.append("student_initials", getStudentInitials());
+    params.append("preceptor_email", getPreceptorEmailForLog());
+    params.append("page", location.href);
+    params.append("ua", navigator.userAgent);
+
+    fetch(LOG_ENDPOINT, { method: "POST", body: params }).catch(() => {});
+  } catch (_) {
+    // logging must never break UI
+  }
+}
+
+// Map button IDs to event names (robust even if handlers change)
+const __LOG_EVENT_MAP = {
+  clearBtn: "clear_form",
+
+  // Main actions
+  copyEmailBtn: "create_link",
+  copyFullEmailBtn: "email_clipboard",
+  composeBtn: "email_client",
+  composeWebBtn: "email_web",
+
+  // Student paste modal
+  pasteClearBtn: "paste_clear",
+
+  // Admin paste modal
+  pasteAdminClearBtn: "admin_paste_clear"
+};
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+
+  // --- Rotation type blank guard for main actions ---
+  // Rotation Type select is [name="ro"] in this form.
+  const form = document.getElementById("builder") || document.querySelector("form");
+  const rtVal = form?.querySelector('[name="ro"]')?.value;
+  const rtBlank = !(rtVal && String(rtVal).trim());
+
+  // If user tries to use key actions while Rotation Type is blank, log a specific event
+  // and DO NOT also log the normal action event.
+  if (rtBlank) {
+    if (btn.id === "copyEmailBtn") { logEvent("create_link_rotation_type_missing"); return; }
+    if (btn.id === "copyFullEmailBtn") { logEvent("email_clipboard_rotation_type_missing"); return; }
+    if (btn.id === "composeBtn") { logEvent("email_client_rotation_type_missing"); return; }
+    if (btn.id === "composeWebBtn") { logEvent("email_web_rotation_type_missing"); return; }
+  }
+
+  // Role-aware events for paste/admin flow
+  if (btn.id === "pasteCloseBtn") {
+    const r = getRoleForLog();
+    logEvent(`paste_modal_closed_${r}`);
+    return;
+  }
+  if (btn.id === "pasteAdminCloseBtn") {
+    const r = getRoleForLog();
+    logEvent(`admin_modal_closed_${r}`);
+    return;
+  }
+
+  if (btn.id === "pasteAdminParseBtn") {
+    // Force admin role for this event
+    logEvent("extract_clicked", "admin", getPasteClassOf("admin"));
+    return;
+  }
+
+  if (btn.id === "pasteApplyBtn") {
+    logEvent("student_paste_apply_clicked", "student");
+    return;
+  }
+
+  const ev = __LOG_EVENT_MAP[btn.id];
+  if (ev) logEvent(ev);
+});
 // becomes true when Admin paste/selection is used
 
     // When STUDENT data is used (i.e., not Admin import), add the appropriate coordinator/recipient
@@ -651,7 +851,6 @@ const student = (seEl.value || "").trim();
     form.querySelector('[name="p2"]')?.addEventListener("change", toggleWarnP2);
 
     document.getElementById("copyEmailBtn").onclick = async () => {
-      logEvent("create_link");
       if (!validateRequiredFields("🔗 Create Link")) return;
 
       if (!requireRotationType("🔗 Create Link")) return;
@@ -666,7 +865,6 @@ const roEl = form.querySelector('[name="ro"]');
       showToast("Link created and copied to clipboard.");
     };
 document.getElementById("copyFullEmailBtn").onclick = async () => {
-      logEvent("copy_full_email");
       if (!validateRequiredFields("📋 Email (Clipboard)")) return;
 
       if (!requireRotationType("📋 Email (Clipboard)")) return;
@@ -674,7 +872,6 @@ document.getElementById("copyFullEmailBtn").onclick = async () => {
     };
 
     document.getElementById("composeBtn").onclick = async () => {
-      logEvent("email_client");
       if (!validateRequiredFields("📧 Email (Client)")) return;
 
       if (!requireRotationType("📧 Email (Client)")) return;
@@ -683,7 +880,6 @@ document.getElementById("copyFullEmailBtn").onclick = async () => {
     };
 
     document.getElementById("composeWebBtn").onclick = async () => {
-      logEvent("email_web");
       if (!validateRequiredFields("🌐 Email (Web)")) return;
 
       if (!requireRotationType("🌐 Email (Web)")) return;
@@ -784,9 +980,18 @@ document.getElementById("copyFullEmailBtn").onclick = async () => {
       }
 
       // Success: fill form, mark as paste-used, set warnings, clear highlights, close modal
+      IS_AUTOFILLING = true;
+    try {
       fillFromParsed(parsed);
+    } finally {
+      IS_AUTOFILLING = false;
+    }
+    resetManualFields();
       
-      logEvent("student_paste_success");pasteAutofillUsed = true;
+      const __co = setCurrentClassOfFromText((document.getElementById("pasteText")||{}).value || "");
+    resetManualFields();
+    logEvent("paste_extracted", "student", __co);
+pasteAutofillUsed = true;
 
       
       // Remember last successful student paste
@@ -1262,10 +1467,19 @@ pasteAdminModal.style.display = "block";
       function fillRotation(r) {
         
         adminImportUsed = true;
+
+        const __co = setCurrentClassOfFromText((document.getElementById("pasteAdminText")||{}).value || "");
+    resetManualFields();
+    logEvent("extract_success", "admin", __co);
 if (typeof fillFromParsed === "function") {
-          fillFromParsed(r);
-        
-      logEvent("admin_import_used");}
+          IS_AUTOFILLING = true;
+    try {
+      fillFromParsed(r);
+    } finally {
+      IS_AUTOFILLING = false;
+    }
+    resetManualFields();
+        }
         if (typeof pasteAutofillUsed !== "undefined") pasteAutofillUsed = true;
 
         
@@ -1422,6 +1636,62 @@ form.addEventListener("reset", () => {
   });
 })();
 </script>
+<script>
+// ===== Robust UI guards =====
+document.addEventListener("DOMContentLoaded", () => {
+  try {
+    const form = document.getElementById("builder") || document.querySelector("form");
+    if (form) form.addEventListener("submit", (e) => e.preventDefault());
+
+    const pasteBtn = document.getElementById("pasteStudentBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const modal = document.getElementById("pasteModal");
+    const closeBtn = document.getElementById("pasteCloseBtn");
+
+    if (pasteBtn) pasteBtn.type = "button";
+    if (clearBtn) clearBtn.type = "button";
+
+    if (pasteBtn && modal) {
+      pasteBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        modal.style.display = "block";
+      });
+    }
+    if (closeBtn && modal) {
+      closeBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        modal.style.display = "none";
+      });
+    }
+    if (modal) {
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) modal.style.display = "none";
+      });
+    }
+    if (clearBtn && form) {
+      clearBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        try { form.reset(); } catch (_) {}
+        
+        try { resetManualFields(); } catch (_) {}
+if (modal) modal.style.display = "none";
+      });
+    }
+  } catch (_) {}
+});
+</script>
+
+  <div id="app-version-footer" style="
+    position: fixed;
+    bottom: 6px;
+    right: 10px;
+    font-size: 11px;
+    color: #666;
+    opacity: 0.8;
+    z-index: 9999;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  ">1.2</div>
+
 </body>
 
 </html>
